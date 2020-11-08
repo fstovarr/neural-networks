@@ -38,7 +38,7 @@ MP3_PATH = "/home/fstovarr/birds/audios/mp3"
 wav_files = os.listdir(WAV_PATH)
 mp3_files = os.listdir(MP3_PATH)
 
-SAMPLES = 16
+SAMPLES = len(wav_files)
 THREADS = 8
 
 
@@ -71,7 +71,6 @@ def mel_frequency(x, sr):
 def chroma(x, sr):
     return librosa.feature.chroma_stft(x, sr=sr)
 
-
 # In[7]:
 
 
@@ -96,7 +95,6 @@ from math import ceil
 
 
 def process_data(processed_data, files):
-    print(files)
     for file in tqdm(files):
         try:
             x, sr = librosa.load("{}/{}".format(WAV_PATH, file), sr=None)
@@ -113,15 +111,7 @@ def process_data(processed_data, files):
         tmp.append(file)
         tmp.append(class_name)
 
-        features = [
-            x,
-            amplitudes,
-            spectral_centroid(x, sr),  
-            spectral_rolloff(x, sr),  
-            spectral_bandwidth(x, sr),  
-            mel_frequency(x, sr),  
-            chroma(x, sr)
-        ]
+        features = [x,amplitudes,spectral_centroid(x, sr),  spectral_rolloff(x, sr),  spectral_bandwidth(x, sr),  mel_frequency(x, sr),  chroma(x, sr)]
 
         for f in features:
             tmp.append(np.mean(f))
@@ -130,25 +120,20 @@ def process_data(processed_data, files):
             tmp.append(np.std(f))
 
         tmp.append(sum(zero_crossing_rate(x, sr)))
-
-        processed_data.append(tmp)
+        
+        csv = open("data.csv", "a+")
+        csv.write(",".join(map(str, tmp)) + "\n")
+        csv.close()
 
 threads = THREADS
 chunk_size = ceil(len(wav_files) / threads)
 jobs = []
 
-out_list = [[]] * threads
+
+out_list = [[] for i in range(threads)]
 
 for i in range(0, threads):
-    print(out_list)
-    chunk = np.array(wav_files[chunk_size * i : min(chunk_size * i + chunk_size, len(wav_files))])    
-    thread = threading.Thread(
-        target=process_data, 
-        args=(
-            out_list[i], 
-            chunk
-        )
-    )
+    thread = threading.Thread(target=process_data, args=(out_list[i], wav_files[chunk_size * i : min(chunk_size * i + chunk_size, len(wav_files))]))
     jobs.append(thread)
     
 for j in jobs:
@@ -160,9 +145,11 @@ for j in jobs:
 
 # In[18]:
 
+
 ol = np.array(out_list)
 sz = ol.shape
 processed_data = ol.reshape((sz[0] * sz[1], sz[2]))
+print(processed_data.shape)
 
 
 # In[19]:
