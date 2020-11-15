@@ -1,23 +1,61 @@
-#!/usr/bin/env python
-# coding: utf-8
-
+from memory_profiler import profile
 # In[1]:
-
-
 import os
 import librosa
 from pydub import AudioSegment
-import sklearn
 import numpy as np
-import matplotlib.pyplot as plt
-import librosa.display
 from random import sample
 from tqdm import tqdm
 import numpy as np
-import pandas as pd
 import random
 import re
+import threading
+from math import ceil
 
+feature_names = [
+    'filename',
+    'class_name', 
+    'wave_min', 
+    'wave_max', 
+    'wave_mean', 
+    'wave_var', 
+    'amp_min', 
+    'amp_max', 
+    'amp_mean', 
+    'amp_var', 
+    'spectral_centroid_min', 
+    'spectral_centroid_max', 
+    'spectral_centroid_mean', 
+    'spectral_centroid_var', 
+    'spectral_rolloff_min', 
+    'spectral_rolloff_max', 
+    'spectral_rolloff_mean', 
+    'spectral_rolloff_var', 
+    'spectral_bandwidth_min', 
+    'spectral_bandwidth_max', 
+    'spectral_bandwidth_mean', 
+    'spectral_bandwidth_var', 
+    'mel_frequency_min', 
+    'mel_frequency_max', 
+    'mel_frequency_mean', 
+    'mel_frequency_var', 
+    'chroma_min', 
+    'chroma_max', 
+    'chroma_mean', 
+    'chroma_var',
+    'zero_crossing_rate'
+ ]
+
+
+# In[23]:
+
+FILENAME="data.csv"
+
+csv = open(FILENAME, "w")
+csv.write(",".join(map(str, feature_names)) + "\n")
+csv.close()
+
+print("INIT")
 
 # In[2]:
 
@@ -28,15 +66,16 @@ import re
 # In[3]:
 
 
+# WAV_PATH = "/home/fstovarr/birds/test"
 WAV_PATH = "/home/fstovarr/birds/audios/wav"
-MP3_PATH = "/home/fstovarr/birds/audios/mp3"
+#MP3_PATH = "/home/fstovarr/birds/audios/mp3"
 
 
 # In[5]:
 
 
 wav_files = os.listdir(WAV_PATH)
-mp3_files = os.listdir(MP3_PATH)
+# mp3_files = os.listdir(MP3_PATH)
 
 SAMPLES = len(wav_files)
 THREADS = 8
@@ -73,137 +112,63 @@ def chroma(x, sr):
 
 # In[7]:
 
-
-random.shuffle(wav_files)
-wav_files
-
-
-# In[8]:
-
-
 wav_files = wav_files[0:SAMPLES]
-
-
-# In[9]:
-
-
-import threading
-from math import ceil
-
 
 # In[10]:
 
-
 def process_data(processed_data, files):
+    x, sr = (None, None)
+    class_name = ""
+    amplitudes = []
+    np_fft = []
     for file in tqdm(files):
         try:
             x, sr = librosa.load("{}/{}".format(WAV_PATH, file), sr=None)
+        
+            class_name = re.search('([A-za-z-]+)-[0-9]+.wav', file).group(1).lower()
+
+            np_fft = np.fft.fft(x)
+            amplitudes = 2/len(x) * np.abs(np_fft)
+            processed_data[0] = file
+            processed_data[1] = class_name
+
+            i = 2
+            for f in [x,amplitudes,spectral_centroid(x, sr),  spectral_rolloff(x, sr),  spectral_bandwidth(x, sr),  mel_frequency(x, sr),  chroma(x, sr)]:
+                processed_data[i] = np.mean(f)
+                processed_data[i+1] = np.max(f)
+                processed_data[i+2] = np.min(f)
+                processed_data[i+3] = np.std(f)
+                i += 4
+
+            processed_data[i] = (sum(zero_crossing_rate(x, sr)))
+
+            csv = open(FILENAME, "a+")
+            csv.write(",".join(map(str, processed_data[0:i+1])) + "\n")
+            csv.close()
         except Exception as e:
             print(e, "ERROR WITH FILE {}".format(file))
             continue
-        
-        tmp = []
 
-        class_name = re.search('([A-za-z-]+)-[0-9]+.wav', file).group(1).lower()
+def start():
+    threads = THREADS
+    chunk_size = ceil(len(wav_files) / threads)
+    jobs = []
 
-        np_fft = np.fft.fft(x)
-        amplitudes = 2/len(x) * np.abs(np_fft)
-        tmp.append(file)
-        tmp.append(class_name)
+    out_list = [[''] * 31 for i in range(threads)]
 
-        features = [x,amplitudes,spectral_centroid(x, sr),  spectral_rolloff(x, sr),  spectral_bandwidth(x, sr),  mel_frequency(x, sr),  chroma(x, sr)]
+    for i in range(0, threads):
+        thread = threading.Thread(target=process_data, args=(out_list[i], wav_files[chunk_size * i : min(chunk_size * i + chunk_size, len(wav_files))]))
+        jobs.append(thread)
 
-        for f in features:
-            tmp.append(np.mean(f))
-            tmp.append(np.max(f))
-            tmp.append(np.min(f))
-            tmp.append(np.std(f))
+    print("THREADS {}".format(THREADS))
 
-        tmp.append(sum(zero_crossing_rate(x, sr)))
-        
-        csv = open("data.csv", "a+")
-        csv.write(",".join(map(str, tmp)) + "\n")
-        csv.close()
+    for j in jobs:
+        print("THREAD")
+        j.start()
 
-threads = THREADS
-chunk_size = ceil(len(wav_files) / threads)
-jobs = []
+    for j in jobs:
+        j.join()
 
-
-out_list = [[] for i in range(threads)]
-
-for i in range(0, threads):
-    thread = threading.Thread(target=process_data, args=(out_list[i], wav_files[chunk_size * i : min(chunk_size * i + chunk_size, len(wav_files))]))
-    jobs.append(thread)
+    print("FINISH")
     
-for j in jobs:
-    j.start()
-
-for j in jobs:
-    j.join()
-
-
-# In[18]:
-
-
-ol = np.array(out_list)
-sz = ol.shape
-processed_data = ol.reshape((sz[0] * sz[1], sz[2]))
-print(processed_data.shape)
-
-
-# In[19]:
-
-
-feature_names = [
-    'file_name',
-    'class_name', 
-    'wave_min', 
-    'wave_max', 
-    'wave_mean', 
-    'wave_var', 
-    'amp_min', 
-    'amp_max', 
-    'amp_mean', 
-    'amp_var', 
-    'spectral_centroid_min', 
-    'spectral_centroid_max', 
-    'spectral_centroid_mean', 
-    'spectral_centroid_var', 
-    'spectral_rolloff_min', 
-    'spectral_rolloff_max', 
-    'spectral_rolloff_mean', 
-    'spectral_rolloff_var', 
-    'spectral_bandwidth_min', 
-    'spectral_bandwidth_max', 
-    'spectral_bandwidth_mean', 
-    'spectral_bandwidth_var', 
-    'mel_frequency_min', 
-    'mel_frequency_max', 
-    'mel_frequency_mean', 
-    'mel_frequency_var', 
-    'chroma_min', 
-    'chroma_max', 
-    'chroma_mean', 
-    'chroma_var',
-    'zero_crossing_rate'
- ]
-
-
-# In[20]:
-
-
-data = pd.DataFrame(data=processed_data, columns=feature_names)
-data
-
-
-# In[21]:
-
-
-data.describe()
-
-
-# In[22]:
-
-
-data.to_csv('first{}.csv'.format(SAMPLES))
+start()
